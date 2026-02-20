@@ -3,7 +3,6 @@
 **Transparent HTTPS proxy for Terraform/OpenTofu credential injection**
 
 [![Go Version](https://img.shields.io/badge/go-1.24+-blue.svg)](https://go.dev/)
-[![CI](https://github.com/hyvmind-io/stellaris-auth/actions/workflows/ci.yml/badge.svg)](https://github.com/hyvmind-io/stellaris-auth/actions/workflows/ci.yml)
 [![License: All Rights Reserved](https://img.shields.io/badge/License-All%20Rights%20Reserved-red.svg)](LICENSE)
 
 ---

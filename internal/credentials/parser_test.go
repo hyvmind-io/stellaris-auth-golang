@@ -404,3 +404,72 @@ func TestCredentialStore_caseInsensitive(t *testing.T) {
 		}
 	}
 }
+
+// TestCredentialStore_LookupHostPort verifies that CredentialStore.Lookup
+// performs exact matching: a credential stored with "host:port" is found by
+// the same "host:port" key, NOT by the bare "host" alone.
+//
+// The bare-hostname fallback is intentionally handled by server.go:ServeHTTP,
+// not by CredentialStore itself — this test documents and guards that contract.
+func TestCredentialStore_LookupHostPort(t *testing.T) {
+	store := New()
+	store.Set("registry.example.com:3000", "port-token")
+
+	t.Run("exact host:port match", func(t *testing.T) {
+		tok, found := store.Lookup("registry.example.com:3000")
+		if !found {
+			t.Fatal("expected credential for exact host:port key, not found")
+		}
+		if tok != "port-token" {
+			t.Errorf("token = %q, want %q", tok, "port-token")
+		}
+	})
+
+	t.Run("bare hostname does NOT match host:port credential", func(t *testing.T) {
+		// CredentialStore is exact-match only. The fallback that strips the port
+		// lives in server.go:ServeHTTP, not here. Verify the contract is upheld.
+		_, found := store.Lookup("registry.example.com")
+		if found {
+			t.Error("Lookup(bare hostname) should NOT match a credential stored with host:port; " +
+				"the fallback belongs in server.go")
+		}
+	})
+
+	t.Run("case insensitive host:port match", func(t *testing.T) {
+		tok, found := store.Lookup("Registry.Example.COM:3000")
+		if !found {
+			t.Fatal("expected case-insensitive match for host:port, not found")
+		}
+		if tok != "port-token" {
+			t.Errorf("token = %q, want %q", tok, "port-token")
+		}
+	})
+}
+
+// TestCredentialStore_LookupBareHostname verifies a credential stored with a
+// bare hostname (no port) is found by the bare hostname, and NOT accidentally
+// found by "hostname:someport" (which would require the fallback in server.go).
+func TestCredentialStore_LookupBareHostname(t *testing.T) {
+	store := New()
+	store.Set("registry.example.com", "bare-token")
+
+	t.Run("bare hostname match", func(t *testing.T) {
+		tok, found := store.Lookup("registry.example.com")
+		if !found {
+			t.Fatal("expected credential for bare hostname, not found")
+		}
+		if tok != "bare-token" {
+			t.Errorf("token = %q, want %q", tok, "bare-token")
+		}
+	})
+
+	t.Run("host:port does NOT match bare hostname credential", func(t *testing.T) {
+		// A lookup for "registry.example.com:443" must not match the bare-hostname
+		// credential. The two-step fallback in server.go handles this case.
+		_, found := store.Lookup("registry.example.com:443")
+		if found {
+			t.Error("Lookup(host:port) should NOT match a credential stored with bare hostname; " +
+				"those are distinct keys in CredentialStore")
+		}
+	})
+}

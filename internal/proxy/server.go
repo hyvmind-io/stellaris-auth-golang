@@ -140,21 +140,50 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// r.Host for CONNECT is "hostname:port" — split to get the bare hostname
-	// used for credential lookup and certificate issuance.
+	// used for certificate issuance. We keep the full host string for dialling.
 	hostname, _, err := net.SplitHostPort(r.Host)
 	if err != nil {
-		// If SplitHostPort fails (no port), treat the whole value as hostname.
+		// If SplitHostPort fails (no port in r.Host), treat the whole value as
+		// both the bare hostname and the dial target.
 		hostname = r.Host
 	}
 
 	// host is the full "hostname:port" string used for dialling.
 	host := r.Host
 
-	if token, found := s.cfg.Credentials.Lookup(hostname); found {
-		s.cfg.Logger.Info("[proxy] MITM", "hostname", hostname, "action", "Bearer injected")
+	// ── Credential lookup ─────────────────────────────────────────────────────
+	// Try the full host:port first (most specific — matches .tofurc blocks like
+	// `credentials "registry.example.com:3000" { ... }`), then fall back to the
+	// bare hostname (matches blocks without a port). This two-step lookup is
+	// intentional: CredentialStore.Lookup performs exact matching only, so the
+	// port-stripping fallback lives here where we have the full CONNECT context.
+	token, found := s.cfg.Credentials.Lookup(host)
+	if !found {
+		token, found = s.cfg.Credentials.Lookup(hostname)
+	}
+
+	if s.cfg.Logger.Enabled(r.Context(), slog.LevelDebug) {
+		s.cfg.Logger.Debug("[proxy] credential lookup",
+			slog.String("r.Host", r.Host),
+			slog.String("tried_host_port", host),
+			slog.String("tried_hostname", hostname),
+			slog.Bool("found", found),
+		)
+	}
+
+	if found {
+		s.cfg.Logger.Info("[proxy] MITM",
+			slog.String("hostname", hostname),
+			slog.String("host", host),
+			slog.String("action", "Bearer injected"),
+		)
 		s.mitm.Handle(w, r, host, hostname, token)
 	} else {
-		s.cfg.Logger.Info("[proxy] TUNNEL", "hostname", hostname, "action", "passthrough")
+		s.cfg.Logger.Info("[proxy] TUNNEL",
+			slog.String("hostname", hostname),
+			slog.String("host", host),
+			slog.String("action", "passthrough"),
+		)
 		s.tunnel.Handle(w, r, host)
 	}
 }

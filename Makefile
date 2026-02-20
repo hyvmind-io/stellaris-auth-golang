@@ -8,7 +8,7 @@ CMD_PATH     := ./cmd/stellaris-auth
 VERSION      := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS      := -ldflags "-X 'main.version=$(VERSION)' -s -w"
 
-.PHONY: all build test test-short lint vet clean release snapshot deps tidy check install help
+.PHONY: all build debug test test-short lint vet clean release snapshot deps tidy check install help
 
 ## all: build the binary (default target)
 all: build
@@ -16,6 +16,10 @@ all: build
 ## build: compile binary for current platform
 build:
 	go build $(LDFLAGS) -o $(BINARY_NAME) $(CMD_PATH)
+
+## debug: compile binary with debug symbols (for delve); disables optimisations and inlining
+debug:
+	go build -gcflags="all=-N -l" -o $(BINARY_NAME) $(CMD_PATH)
 
 ## test: run all tests with race detector
 test:

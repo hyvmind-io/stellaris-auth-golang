@@ -339,6 +339,153 @@ func TestProxy_AddrAfterListen(t *testing.T) {
 	}
 }
 
+// TestProxy_MITMWithHostPort verifies that a credential registered with a
+// "host:port" key (as .tofurc stores it) is found when the CONNECT request
+// carries that exact host:port in r.Host, and Bearer token injection occurs.
+func TestProxy_MITMWithHostPort(t *testing.T) {
+	var (
+		mu         sync.Mutex
+		gotAuthHdr string
+	)
+
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotAuthHdr = r.Header.Get("Authorization")
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	upstreamURL, _ := url.Parse(upstream.URL)
+	upstreamAddr := upstreamURL.Host // "127.0.0.1:PORT" — includes port
+
+	const token = "hostport-token"
+	// Register the credential keyed by the FULL "host:port" string, exactly as
+	// .tofurc does for non-default ports.
+	srv, _ := newTestProxy(t, map[string]string{
+		upstreamAddr: token, // key = "127.0.0.1:PORT"
+	})
+
+	client := proxyClient(t, srv.Addr(), nil, true)
+
+	resp, err := client.Get("https://" + upstreamAddr + "/check")
+	if err != nil {
+		t.Fatalf("request through proxy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+
+	mu.Lock()
+	got := gotAuthHdr
+	mu.Unlock()
+
+	want := "Bearer " + token
+	if got != want {
+		t.Errorf("Authorization header = %q; want %q (host:port credential not matched)", got, want)
+	}
+}
+
+// TestProxy_MITMBareHostnameFallback verifies that a credential registered
+// with just the bare hostname (no port) still results in MITM + Bearer
+// injection when the CONNECT request carries "hostname:port" in r.Host.
+func TestProxy_MITMBareHostnameFallback(t *testing.T) {
+	var (
+		mu         sync.Mutex
+		gotAuthHdr string
+	)
+
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotAuthHdr = r.Header.Get("Authorization")
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	upstreamURL, _ := url.Parse(upstream.URL)
+	upstreamHost := upstreamURL.Hostname() // "127.0.0.1" — NO port
+	upstreamAddr := upstreamURL.Host       // "127.0.0.1:PORT"
+
+	const token = "bare-hostname-token"
+	// Register credential with BARE hostname only (no port).  The proxy must
+	// fall back from the host:port lookup to the bare-hostname lookup.
+	srv, _ := newTestProxy(t, map[string]string{
+		upstreamHost: token, // key = "127.0.0.1"
+	})
+
+	client := proxyClient(t, srv.Addr(), nil, true)
+
+	resp, err := client.Get("https://" + upstreamAddr + "/fallback")
+	if err != nil {
+		t.Fatalf("request through proxy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+
+	mu.Lock()
+	got := gotAuthHdr
+	mu.Unlock()
+
+	want := "Bearer " + token
+	if got != want {
+		t.Errorf("Authorization header = %q; want %q (bare-hostname fallback not working)", got, want)
+	}
+}
+
+// TestProxy_HostPortPrecedenceOverBareHostname verifies that when credentials
+// exist for BOTH "host:port" and "host", the more-specific "host:port" key wins.
+func TestProxy_HostPortPrecedenceOverBareHostname(t *testing.T) {
+	var (
+		mu         sync.Mutex
+		gotAuthHdr string
+	)
+
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotAuthHdr = r.Header.Get("Authorization")
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	upstreamURL, _ := url.Parse(upstream.URL)
+	upstreamHost := upstreamURL.Hostname() // "127.0.0.1"
+	upstreamAddr := upstreamURL.Host       // "127.0.0.1:PORT"
+
+	const (
+		specificToken = "specific-port-token"
+		genericToken  = "generic-host-token"
+	)
+	// Both keys are registered; the host:port key must win.
+	srv, _ := newTestProxy(t, map[string]string{
+		upstreamAddr: specificToken, // "127.0.0.1:PORT" — more specific
+		upstreamHost: genericToken,  // "127.0.0.1"      — less specific
+	})
+
+	client := proxyClient(t, srv.Addr(), nil, true)
+
+	resp, err := client.Get("https://" + upstreamAddr + "/precedence")
+	if err != nil {
+		t.Fatalf("request through proxy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	mu.Lock()
+	got := gotAuthHdr
+	mu.Unlock()
+
+	want := "Bearer " + specificToken
+	if got != want {
+		t.Errorf("Authorization = %q; want %q (host:port should take precedence over bare hostname)", got, want)
+	}
+}
+
 // ─── internal helpers ─────────────────────────────────────────────────────────
 
 // newBufReader wraps a net.Conn in a bufio.Reader so http.ReadResponse can
