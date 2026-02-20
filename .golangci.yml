@@ -1,0 +1,46 @@
+# golangci-lint configuration for stellaris-auth
+run:
+  timeout: 5m
+  go: "1.24"
+  tests: true
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - revive
+    - gocritic
+    - gosec
+    - exhaustive
+
+linters-settings:
+  govet:
+    enable:
+      - shadow
+  revive:
+    rules:
+      - name: exported
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: if-return
+  gosec:
+    excludes:
+      - G304
+  goimports:
+    local-prefixes: github.com/hyvmind-io/stellaris-auth
+
+issues:
+  exclude-rules:
+    - path: "_test.go"
+      linters:
+        - gosec
+        - errcheck
+  max-issues-per-linter: 0
+  max-same-issues: 0

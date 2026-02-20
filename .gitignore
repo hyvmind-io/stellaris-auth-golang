@@ -1,0 +1,36 @@
+# Binaries
+stellaris-auth
+stellaris-auth.exe
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+dist/
+
+# Test binary
+*.test
+
+# Output of go coverage
+*.out
+
+# Vendor
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Build artifacts
+bin/
