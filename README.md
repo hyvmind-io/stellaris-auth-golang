@@ -2,7 +2,7 @@
 
 **Transparent HTTPS proxy for Terraform/OpenTofu credential injection**
 
-[![Go Version](https://img.shields.io/badge/go-1.24+-blue.svg)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/go-1.26-blue.svg)](https://go.dev/)
 [![License: All Rights Reserved](https://img.shields.io/badge/License-All%20Rights%20Reserved-red.svg)](LICENSE)
 
 ---
