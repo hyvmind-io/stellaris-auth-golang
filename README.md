@@ -268,10 +268,33 @@ That's it. Credentials are injected transparently — no changes to your Terrafo
 ### Command Syntax
 
 ```
-stellaris-auth [flags] <tofu|terraform> [args...]
+stellaris-auth [flags] <tofu|terraform|terragrunt|...> [args...]
 stellaris-auth setup [--force]
 stellaris-auth version
 ```
+
+`stellaris-auth`'s own flags must come **before** the wrapped binary name. Everything after the binary name is forwarded to the child process verbatim — including flags that collide with stellaris-auth's own (such as `-v`), shorthand bundles (`-chdir=...`), and nested `--` separators. This makes it safe to wrap any toolchain that shells out to `tofu`/`terraform`, including Terragrunt.
+
+### Binary and Alias Resolution
+
+The wrapped name is resolved in two steps:
+
+1. **PATH lookup** — a real executable, symlink, or wrapper script (`terragrunt`, `terraform`, `tofu`, …).
+2. **Shell alias** — if the name is not on PATH, stellaris-auth asks your interactive shell to expand it (`$SHELL -ic 'alias <name>'`). So your existing aliases work directly:
+
+   ```bash
+   # ~/.zshrc or ~/.bashrc
+   alias tg='terragrunt'
+   alias tf='terraform'
+   alias tgall='terragrunt run --all'
+
+   stellaris-auth tg run --no-color --all -- plan   # tg  -> terragrunt
+   stellaris-auth tgall -- plan                       # tgall -> terragrunt run --all
+   ```
+
+   Arguments baked into an alias (e.g. `run --all`) are prepended to your own, matching normal shell alias expansion. bash and zsh are supported; resolution falls back to a clear "not found" error otherwise.
+
+> Note: a shell never expands aliases past the first word, so `stellaris-auth tg …` is not expanded by your shell — stellaris-auth performs the alias lookup itself.
 
 ### Examples
 
@@ -280,6 +303,10 @@ stellaris-auth version
 stellaris-auth tofu init
 stellaris-auth terraform plan -out=plan.tfplan
 stellaris-auth tofu apply -auto-approve
+
+# Terragrunt (flags after the binary are forwarded untouched)
+stellaris-auth terragrunt run --no-color --all -- plan
+stellaris-auth --verbose terragrunt run --all -- apply
 
 # With flags
 stellaris-auth --verbose tofu init

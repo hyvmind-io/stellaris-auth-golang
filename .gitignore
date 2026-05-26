@@ -1,6 +1,6 @@
-# Binaries
-stellaris-auth
-stellaris-auth.exe
+# Binaries (anchored to repo root so they don't match the cmd/stellaris-auth/ source dir)
+/stellaris-auth
+/stellaris-auth.exe
 *.exe
 *.exe~
 *.dll

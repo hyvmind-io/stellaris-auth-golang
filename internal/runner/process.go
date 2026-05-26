@@ -32,26 +32,37 @@ type Config struct {
 type Runner struct {
 	cfg     Config
 	binPath string
+	args    []string // alias-prefix args (if any) followed by cfg.Args
 	cmd     *exec.Cmd
 }
 
-// New resolves the binary via exec.LookPath and returns a Runner ready to use.
-// Returns an error if the binary cannot be found in PATH.
+// New resolves the binary and returns a Runner ready to use. The name in
+// cfg.Binary may be a real executable on PATH or one of the user's interactive
+// shell aliases (e.g. "tg" -> "terragrunt"); see resolveBinary. Any leading
+// arguments contributed by an alias are prepended to cfg.Args. Returns an error
+// if the name resolves to neither a binary nor a usable alias.
 func New(cfg Config) (*Runner, error) {
-	binPath, err := exec.LookPath(cfg.Binary)
+	binPath, prefixArgs, err := resolveBinary(cfg.Binary, cfg.Logger)
 	if err != nil {
-		return nil, fmt.Errorf("runner: binary %q not found in PATH: %w", cfg.Binary, err)
+		return nil, err
 	}
+
+	args := cfg.Args
+	if len(prefixArgs) > 0 {
+		args = append(append([]string{}, prefixArgs...), cfg.Args...)
+	}
+
 	return &Runner{
 		cfg:     cfg,
 		binPath: binPath,
+		args:    args,
 	}, nil
 }
 
 // Start forks the child process, wiring up stdin/stdout/stderr directly and
 // injecting proxy environment variables.
 func (r *Runner) Start() error {
-	r.cmd = exec.Command(r.binPath, r.cfg.Args...)
+	r.cmd = exec.Command(r.binPath, r.args...)
 	r.cmd.Env = buildChildEnv(os.Environ(), r.cfg.ProxyAddr, r.cfg.CAFile)
 	r.cmd.Stdout = os.Stdout
 	r.cmd.Stderr = os.Stderr
@@ -59,7 +70,7 @@ func (r *Runner) Start() error {
 
 	r.cfg.Logger.Info("starting child process",
 		slog.String("binary", r.binPath),
-		slog.Any("args", r.cfg.Args),
+		slog.Any("args", r.args),
 	)
 
 	if err := r.cmd.Start(); err != nil {
