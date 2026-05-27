@@ -243,12 +243,14 @@ func runRootCmd(cmd *cobra.Command, args []string) error {
 
 	exitCode, runErr := childRunner.Run(cmd.Context())
 
-	// Gracefully shut down the proxy regardless of child exit code.
+	// Gracefully shut down the proxy regardless of child exit code. Cancel
+	// explicitly (not via defer) because the success path may call os.Exit
+	// below, which would skip deferred calls.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Warn("proxy shutdown error", slog.String("error", err.Error()))
 	}
+	cancel()
 
 	// Re-check if proxy itself failed for a reason other than graceful shutdown.
 	select {

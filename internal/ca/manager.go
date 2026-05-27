@@ -136,6 +136,7 @@ func (m *Manager) GenerateCA(force bool) (*CA, error) {
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
 
+	//nolint:gosec // G306: the CA certificate is public; 0644 (world-readable) is intended.
 	if err := os.WriteFile(m.CertPath(), certPEM, 0644); err != nil {
 		return nil, fmt.Errorf("ca: write cert file: %w", err)
 	}

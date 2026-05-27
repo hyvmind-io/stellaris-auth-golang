@@ -67,6 +67,7 @@ func (h *mitmHandler) Handle(
 	// ── 4. TLS server side (towards client) ─────────────────────────────────
 	tlsClient := tls.Server(clientConn, &tls.Config{
 		Certificates: []tls.Certificate{*leafCert},
+		MinVersion:   tls.VersionTLS12,
 	})
 	defer tlsClient.Close()
 
@@ -171,8 +172,11 @@ func (h *mitmHandler) upstreamTLSConfigFor(hostname string) *tls.Config {
 	if h.upstreamTLSConfig != nil {
 		cfg = h.upstreamTLSConfig.Clone()
 	} else {
-		cfg = &tls.Config{}
+		cfg = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
 	cfg.ServerName = hostname
+	if cfg.MinVersion == 0 {
+		cfg.MinVersion = tls.VersionTLS12
+	}
 	return cfg
 }

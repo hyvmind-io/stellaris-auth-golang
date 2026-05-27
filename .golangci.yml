@@ -1,7 +1,7 @@
 # golangci-lint configuration for stellaris-auth
 run:
   timeout: 5m
-  go: "1.24"
+  go: "1.26"
   tests: true
 
 linters:
@@ -20,9 +20,8 @@ linters:
     - exhaustive
 
 linters-settings:
-  govet:
-    enable:
-      - shadow
+  # govet's shadow check is disabled (not a default vet check): scoped
+  # `if err := f(); err != nil` shadowing is idiomatic Go, not a defect.
   revive:
     rules:
       - name: exported

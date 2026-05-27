@@ -65,6 +65,7 @@ func New(cfg Config) (*Runner, error) {
 // Start forks the child process, wiring up stdin/stdout/stderr directly and
 // injecting proxy environment variables.
 func (r *Runner) Start() error {
+	//nolint:gosec // G204: executing the user-specified binary is this tool's entire purpose.
 	r.cmd = exec.Command(r.binPath, r.args...)
 	r.cmd.Env = buildChildEnv(os.Environ(), r.cfg.ProxyAddr, r.cfg.CAFile)
 	r.cmd.Stdout = os.Stdout

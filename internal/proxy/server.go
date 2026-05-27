@@ -104,8 +104,9 @@ func (s *Server) ListenAndServe() error {
 	s.ln.Store(&ln)
 
 	srv := &http.Server{
-		Handler:     s,
-		IdleTimeout: s.cfg.IdleTimeout,
+		Handler:           s,
+		IdleTimeout:       s.cfg.IdleTimeout,
+		ReadHeaderTimeout: 10 * time.Second, // bound slow-header (Slowloris) clients
 	}
 	s.server.Store(srv)
 
