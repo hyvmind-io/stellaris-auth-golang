@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 HyvMind.io
+
 package runner
 
 import (
@@ -131,7 +134,7 @@ func isWordByte(b byte) bool {
 }
 
 // singleQuote wraps s in single quotes for safe inclusion in a shell command,
-// escaping any embedded single quotes via the '\'' idiom.
+// escaping any embedded single quotes via the '\” idiom.
 func singleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 HyvMind.io
+
 // Package proxy implements a transparent HTTPS forward proxy with selective
 // TLS interception (MITM) for hosts with known credentials, and raw TCP
 // tunneling (passthrough) for all other hosts.

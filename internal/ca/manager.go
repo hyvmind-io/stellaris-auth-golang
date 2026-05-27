@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 HyvMind.io
+
 // Package ca provides Certificate Authority lifecycle management for the
 // stellaris-auth transparent HTTPS forward proxy.
 //

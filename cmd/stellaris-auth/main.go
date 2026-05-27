@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 HyvMind.io
+
 // stellaris-auth is a transparent HTTPS forward proxy that injects Terraform /
 // OpenTofu registry credentials into child processes without requiring any
 // changes to the toolchain configuration.
