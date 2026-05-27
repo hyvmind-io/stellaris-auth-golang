@@ -3,7 +3,7 @@
 **Transparent HTTPS proxy for Terraform/OpenTofu credential injection**
 
 [![Go Version](https://img.shields.io/badge/go-1.26-blue.svg)](https://go.dev/)
-[![License: All Rights Reserved](https://img.shields.io/badge/License-All%20Rights%20Reserved-red.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 ---
 
@@ -660,8 +660,8 @@ When Stellaris runs with `PRIVATE_REGISTRY=true` (strict mode), all registry rou
 
 ## License
 
-**All Rights Reserved** — see [LICENSE](LICENSE) for details.
+**GNU General Public License v3.0** — see [LICENSE](LICENSE) for the full text.
 
-This software is proprietary and confidential. No part of this software may be copied, modified, merged, published, distributed, sublicensed, sold, or otherwise used without the express written permission of HyvMind.io.
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 Copyright (c) 2026 [HyvMind.io](https://hyvmind.io)
