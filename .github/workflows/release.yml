@@ -1,0 +1,108 @@
+# =============================================================================
+# Release Workflow
+#
+# Runs semantic-release on every push/merge to master (and on manual trigger).
+# semantic-release determines the next version from Conventional Commits,
+# generates the release notes + CHANGELOG.md (committed back to master with
+# [skip ci]), creates the git tag, and creates the GitHub Release whose body
+# is those same notes. GoReleaser (invoked via @semantic-release/exec, build
+# only — `--skip=publish`) cross-compiles the binaries; @semantic-release/github
+# uploads the resulting archives + checksums as Release assets.
+#
+# Build matrix (see .goreleaser.yml): macOS arm64, Windows amd64, Windows arm64,
+# Linux amd64, Linux arm64.
+#
+# Uses a GitHub App installation token (VERSION_BUMPER_* org variables/secrets) to bypass branch
+# protection rules, allowing semantic-release to push the CHANGELOG.md commit
+# and version tag directly to master.
+# =============================================================================
+
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+
+  # Manual trigger — no inputs; semantic-release inspects the commit history
+  # itself to decide whether a release is warranted.
+  workflow_dispatch:
+
+jobs:
+  release:
+    name: semantic-release
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # create tags, releases, and commit CHANGELOG.md back
+      issues: write
+      pull-requests: write
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Generate GitHub App installation token to bypass branch protection
+      # -----------------------------------------------------------------------
+      - name: Generate GitHub App token
+        uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ vars.VERSION_BUMPER_APPID }}
+          private-key: ${{ secrets.VERSION_BUMPER_SECRET }}
+
+      # -----------------------------------------------------------------------
+      # 2. Checkout full history using the App token (not default GITHUB_TOKEN)
+      #    so semantic-release can push commits and tags to the protected branch.
+      # -----------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      # -----------------------------------------------------------------------
+      # 3. Set up Go (used by GoReleaser to cross-compile the binaries)
+      # -----------------------------------------------------------------------
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      # -----------------------------------------------------------------------
+      # 4. Set up Node.js (runs semantic-release)
+      # -----------------------------------------------------------------------
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # -----------------------------------------------------------------------
+      # 5. Install GoReleaser onto PATH (install-only; semantic-release invokes
+      #    it during the prepare phase via @semantic-release/exec to build the
+      #    artifacts before @semantic-release/github uploads them).
+      # -----------------------------------------------------------------------
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          install-only: true
+
+      # -----------------------------------------------------------------------
+      # 6. Install semantic-release and plugins.
+      #    No package.json in this repo — install transiently with --no-save.
+      # -----------------------------------------------------------------------
+      - name: Install semantic-release and plugins
+        run: npm install --no-save semantic-release @semantic-release/commit-analyzer @semantic-release/release-notes-generator @semantic-release/changelog @semantic-release/git @semantic-release/exec @semantic-release/github
+
+      # -----------------------------------------------------------------------
+      # 7. Run semantic-release.
+      #    Config is read from .releaserc.json at the repo root.
+      #    GITHUB_TOKEN uses the App token so semantic-release can push the
+      #    CHANGELOG commit + tag (bypassing branch protection) and create the
+      #    GitHub Release with assets.
+      # -----------------------------------------------------------------------
+      - name: Run semantic-release
+        run: ./node_modules/.bin/semantic-release
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

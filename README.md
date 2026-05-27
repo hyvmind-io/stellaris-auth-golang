@@ -190,7 +190,7 @@ cd stellaris-auth
 make build
 ```
 
-**Requires**: Go 1.24+
+**Requires**: Go 1.26+
 
 ### Homebrew (Coming Soon)
 
@@ -461,7 +461,7 @@ stages:
 
 tofu-plan:
   stage: plan
-  image: golang:1.24
+  image: golang:1.26
   variables:
     TOFU_TOKEN_registry_example_com: ${REGISTRY_TOKEN}
   before_script:
@@ -561,7 +561,7 @@ stellaris-auth/
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.26+
 - [golangci-lint](https://golangci-lint.run/) (for linting)
 
 ### Build

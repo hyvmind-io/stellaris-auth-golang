@@ -1,6 +1,6 @@
 module github.com/hyvmind-io/stellaris-auth
 
-go 1.24.0
+go 1.26.0
 
 require (
 	github.com/hashicorp/hcl/v2 v2.24.0
