@@ -8,6 +8,11 @@ CMD_PATH     := ./cmd/stellaris-auth
 VERSION      := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS      := -ldflags "-X 'main.version=$(VERSION)' -s -w"
 
+# install destination: ~/.local/bin by default (ignores ambient GOBIN so a
+# version-pinned toolchain dir can't capture the binary). Override explicitly
+# with `make install INSTALL_DIR=/usr/local/bin`.
+INSTALL_DIR  ?= $(HOME)/.local/bin
+
 .PHONY: all build debug test test-short lint vet clean release snapshot deps tidy check install help
 
 ## all: build the binary (default target)
@@ -69,7 +74,13 @@ deps:
 
 ## install: install binary to $$GOPATH/bin
 install:
-	go install $(LDFLAGS) $(CMD_PATH)
+	@mkdir -p "$(INSTALL_DIR)"
+	GOBIN="$(INSTALL_DIR)" go install $(LDFLAGS) $(CMD_PATH)
+	@echo "installed $(BINARY_NAME) -> $(INSTALL_DIR)/$(BINARY_NAME)"
+	@case ":$$PATH:" in \
+		*":$(INSTALL_DIR):"*) ;; \
+		*) printf 'warning: %s is not in your PATH.\n  add to your shell rc:  export PATH="%s:$$PATH"\n' "$(INSTALL_DIR)" "$(INSTALL_DIR)" >&2 ;; \
+	esac
 
 ## cross-build: build for all supported platforms (verification only)
 cross-build:
