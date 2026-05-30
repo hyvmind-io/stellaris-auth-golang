@@ -33,7 +33,7 @@ linters-settings:
     excludes:
       - G304
   goimports:
-    local-prefixes: github.com/hyvmind-io/stellaris-auth
+    local-prefixes: github.com/hyvmind-io/stellaris-auth-golang
 
 issues:
   exclude-rules:
