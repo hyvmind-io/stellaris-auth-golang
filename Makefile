@@ -3,7 +3,6 @@
 # ============================================================================
 
 BINARY_NAME  := stellaris-auth
-MODULE       := github.com/hyvmind-io/stellaris-auth-golang
 CMD_PATH     := ./cmd/stellaris-auth
 VERSION      := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS      := -ldflags "-X 'main.version=$(VERSION)' -s -w"
