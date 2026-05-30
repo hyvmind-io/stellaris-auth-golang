@@ -56,7 +56,7 @@ inputs:
     required: false
     default: "false"
   github-token:
-    description: "Token used for the GitHub Releases API (latest-version lookup + download). Defaults to the workflow token; raise rate limits / reach private release assets."
+    description: "Token for the GitHub Releases API (version lookup only). Defaults to the workflow token; raises API rate limits. Not sent on the asset download — public release assets need no auth."
     required: false
     default: ${{ github.token }}
 
@@ -93,8 +93,12 @@ runs:
         # --- Resolve version --------------------------------------------------
         VERSION="${INPUT_VERSION}"
         if [ -z "${VERSION}" ] || [ "${VERSION}" = "latest" ]; then
-          VERSION="$(curl -fsSL "${AUTH[@]}" "${API}/releases/latest" \
-            | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+          # Capture the full response first. Piping curl into `grep -m1` makes grep
+          # close the pipe after the first match; curl then hits EPIPE and, under
+          # `set -o pipefail`, exits 23 ("failure writing output"). Parse the
+          # captured string instead of a live pipe.
+          RESP="$(curl -fsSL "${AUTH[@]}" "${API}/releases/latest")"
+          VERSION="$(printf '%s\n' "${RESP}" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
         fi
         # Normalise: strip a single leading v for the numeric form; tags are vX.Y.Z.
         VERSION="${VERSION#v}"
@@ -131,8 +135,10 @@ runs:
         # --- Download archive + checksum, verify ------------------------------
         WORK="$(mktemp -d)"
         echo "Downloading ${URL}"
-        curl -fsSL "${AUTH[@]}" -o "${WORK}/${ARCHIVE}" "${URL}"
-        if curl -fsSL "${AUTH[@]}" -o "${WORK}/${ARCHIVE}.sha256" "${SUM_URL}"; then
+        # Public release assets: no Authorization header. The download 302-redirects
+        # to a signed CDN URL that rejects an extra auth header. Retry transients.
+        curl -fsSL --retry 3 --retry-delay 2 -o "${WORK}/${ARCHIVE}" "${URL}"
+        if curl -fsSL --retry 3 --retry-delay 2 -o "${WORK}/${ARCHIVE}.sha256" "${SUM_URL}"; then
           ( cd "${WORK}"
             if command -v sha256sum >/dev/null 2>&1; then sha256sum -c "${ARCHIVE}.sha256"
             else shasum -a 256 -c "${ARCHIVE}.sha256"; fi )
