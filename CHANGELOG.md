@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/hyvmind-io/stellaris-auth-golang/compare/v1.0.0...v1.0.1) (2026-05-30)
+
+
+### Bug Fixes
+
+* make installer robust against curl exit 23 on version lookup ([7a04a30](https://github.com/hyvmind-io/stellaris-auth-golang/commit/7a04a30b1bd69ef6a507c95ca02da0d8e812df81))
+
 # 1.0.0 (2026-05-30)
 
 
