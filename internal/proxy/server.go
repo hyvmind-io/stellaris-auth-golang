@@ -16,8 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hyvmind-io/stellaris-auth/internal/ca"
-	"github.com/hyvmind-io/stellaris-auth/internal/credentials"
+	"github.com/hyvmind-io/stellaris-auth-golang/internal/ca"
+	"github.com/hyvmind-io/stellaris-auth-golang/internal/credentials"
 )
 
 // Config holds the configuration for the proxy Server.

@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hyvmind-io/stellaris-auth/internal/ca"
+	"github.com/hyvmind-io/stellaris-auth-golang/internal/ca"
 )
 
 // mitmHandler intercepts TLS connections for hosts that have a registered

@@ -29,10 +29,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hyvmind-io/stellaris-auth/internal/ca"
-	"github.com/hyvmind-io/stellaris-auth/internal/credentials"
-	"github.com/hyvmind-io/stellaris-auth/internal/proxy"
-	"github.com/hyvmind-io/stellaris-auth/internal/runner"
+	"github.com/hyvmind-io/stellaris-auth-golang/internal/ca"
+	"github.com/hyvmind-io/stellaris-auth-golang/internal/credentials"
+	"github.com/hyvmind-io/stellaris-auth-golang/internal/proxy"
+	"github.com/hyvmind-io/stellaris-auth-golang/internal/runner"
 )
 
 var version = "dev" // set via -ldflags "-X main.version=x.y.z" at build time

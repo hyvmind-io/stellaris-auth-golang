@@ -1,4 +1,4 @@
-module github.com/hyvmind-io/stellaris-auth
+module github.com/hyvmind-io/stellaris-auth-golang
 
 go 1.26.0
 

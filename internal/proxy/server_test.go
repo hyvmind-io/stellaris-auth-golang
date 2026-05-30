@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyvmind-io/stellaris-auth/internal/ca"
-	"github.com/hyvmind-io/stellaris-auth/internal/credentials"
-	"github.com/hyvmind-io/stellaris-auth/internal/proxy"
+	"github.com/hyvmind-io/stellaris-auth-golang/internal/ca"
+	"github.com/hyvmind-io/stellaris-auth-golang/internal/credentials"
+	"github.com/hyvmind-io/stellaris-auth-golang/internal/proxy"
 )
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

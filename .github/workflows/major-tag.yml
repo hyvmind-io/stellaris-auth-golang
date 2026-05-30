@@ -1,0 +1,38 @@
+# =============================================================================
+# Update major-version tag
+#
+# After a release is published (by semantic-release), force-move the floating
+# vMAJOR tag (e.g. v1) to the new release tag so consumers can pin
+# `uses: hyvmind-io/stellaris-auth-golang@v1` and receive the latest v1.x.y.
+#
+# Tag pushes do not trigger the Release workflow (it runs on push to master /
+# workflow_dispatch only), so there is no recursion.
+# =============================================================================
+name: Update major version tag
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  major:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Move vMAJOR tag to ${{ github.event.release.tag_name }}
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          MAJOR="v$(echo "${TAG#v}" | cut -d. -f1)"   # v1.2.3 -> v1
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f "${MAJOR}" "${TAG}"
+          git push -f origin "refs/tags/${MAJOR}"
+          echo "Moved ${MAJOR} -> ${TAG}"

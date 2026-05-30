@@ -182,7 +182,7 @@ sudo mv stellaris-auth /usr/local/bin/
 
 ```bash
 # Install directly to $GOPATH/bin
-go install github.com/hyvmind-io/stellaris-auth/cmd/stellaris-auth@latest
+go install github.com/hyvmind-io/stellaris-auth-golang/cmd/stellaris-auth@latest
 
 # Or clone and build
 git clone https://github.com/hyvmind-io/stellaris-auth-golang.git
