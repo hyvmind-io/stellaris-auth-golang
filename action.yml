@@ -1,0 +1,204 @@
+# =============================================================================
+# stellaris-auth GitHub Action (composite)
+#
+# Installs the stellaris-auth binary from a published GitHub Release onto the
+# runner PATH, then (unless setup-only) executes the wrapped IaC tool through
+# it: `stellaris-auth [flags] <tool> <args>`. Registry credentials are supplied
+# by the consumer via TF_TOKEN_* / TOFU_TOKEN_* environment variables (the same
+# sources stellaris-auth reads natively); this action does not handle tokens.
+#
+# Works on Linux, macOS, and Windows runners (amd64/arm64). macOS amd64 is not
+# published — use a macos-14+ (arm64) runner.
+# =============================================================================
+name: "stellaris-auth"
+description: "Inject registry Bearer tokens into Terraform/OpenTofu/Terragrunt traffic via a transparent local MITM proxy."
+author: "hyvmind-io"
+
+branding:
+  icon: "lock"
+  color: "purple"
+
+inputs:
+  version:
+    description: 'Release version to install (e.g. "v1.2.3", "1.2.3", or "latest").'
+    required: false
+    default: "latest"
+  tool:
+    description: "Wrapped binary to run: tofu | terraform | terragrunt. Required unless setup-only is true."
+    required: false
+    default: ""
+  args:
+    description: "Arguments passed to the wrapped tool, space-separated (e.g. \"run --all -- init\"). Word-split by the shell; for complex quoting use setup-only and call stellaris-auth in your own step."
+    required: false
+    default: ""
+  working-directory:
+    description: "Directory to run the wrapped tool in."
+    required: false
+    default: "."
+  registry-host:
+    description: 'Registry hostname to authenticate (e.g. "registry.example.com"). Paired with `token`; injected as stellaris-auth --registry-host (highest priority). Leave empty to rely solely on preset TF_TOKEN_*/TOFU_TOKEN_* env.'
+    required: false
+    default: ""
+  token:
+    description: "Bearer token for `registry-host`. Masked in logs and never echoed. Requires `registry-host`. Optional — preset TF_TOKEN_*/TOFU_TOKEN_* env vars are honoured independently."
+    required: false
+    default: ""
+  flags:
+    description: 'Extra stellaris-auth flags placed before the tool name (e.g. "--ca-dir /tmp/ca"). --verbose is added automatically when verbose=true. Do NOT put tokens here — they would be echoed; use the `token` input instead.'
+    required: false
+    default: ""
+  verbose:
+    description: "Add --verbose to stellaris-auth (debug logging; tokens never logged)."
+    required: false
+    default: "false"
+  setup-only:
+    description: "Install the binary onto PATH and skip execution. Call stellaris-auth yourself in later steps."
+    required: false
+    default: "false"
+  github-token:
+    description: "Token used for the GitHub Releases API (latest-version lookup + download). Defaults to the workflow token; raise rate limits / reach private release assets."
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: "The resolved version that was installed (without leading v)."
+    value: ${{ steps.install.outputs.version }}
+  bin-path:
+    description: "Absolute path to the installed stellaris-auth binary."
+    value: ${{ steps.install.outputs.bin-path }}
+
+runs:
+  using: "composite"
+  steps:
+    # -------------------------------------------------------------------------
+    # 1. Resolve version, detect platform, download + checksum-verify + extract,
+    #    place the binary in a dedicated dir, and prepend it to PATH.
+    # -------------------------------------------------------------------------
+    - id: install
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        REPO="hyvmind-io/stellaris-auth-golang"
+        API="https://api.github.com/repos/${REPO}"
+        AUTH=()
+        if [ -n "${GH_TOKEN:-}" ]; then
+          AUTH=(-H "Authorization: Bearer ${GH_TOKEN}")
+        fi
+
+        # --- Resolve version --------------------------------------------------
+        VERSION="${INPUT_VERSION}"
+        if [ -z "${VERSION}" ] || [ "${VERSION}" = "latest" ]; then
+          VERSION="$(curl -fsSL "${AUTH[@]}" "${API}/releases/latest" \
+            | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+        fi
+        # Normalise: strip a single leading v for the numeric form; tags are vX.Y.Z.
+        VERSION="${VERSION#v}"
+        if [ -z "${VERSION}" ]; then
+          echo "::error::could not resolve stellaris-auth version (input='${INPUT_VERSION}')"
+          exit 1
+        fi
+        TAG="v${VERSION}"
+
+        # --- Detect platform → goreleaser os/arch ----------------------------
+        case "${RUNNER_OS}" in
+          Linux)   OS="linux"   ;;
+          macOS)   OS="darwin"  ;;
+          Windows) OS="windows" ;;
+          *) echo "::error::unsupported RUNNER_OS=${RUNNER_OS}"; exit 1 ;;
+        esac
+        case "${RUNNER_ARCH}" in
+          X64)   ARCH="amd64" ;;
+          ARM64) ARCH="arm64" ;;
+          *) echo "::error::unsupported RUNNER_ARCH=${RUNNER_ARCH}"; exit 1 ;;
+        esac
+        if [ "${OS}" = "darwin" ] && [ "${ARCH}" = "amd64" ]; then
+          echo "::error::no published darwin/amd64 build — use a macos-14+ (arm64) runner"
+          exit 1
+        fi
+
+        if [ "${OS}" = "windows" ]; then EXT="zip"; BIN="stellaris-auth.exe"; else EXT="tar.gz"; BIN="stellaris-auth"; fi
+
+        BASE="stellaris-auth-${TAG}-${OS}-${ARCH}"
+        ARCHIVE="${BASE}.${EXT}"
+        URL="https://github.com/${REPO}/releases/download/${TAG}/${ARCHIVE}"
+        SUM_URL="${URL}.sha256"
+
+        # --- Download archive + checksum, verify ------------------------------
+        WORK="$(mktemp -d)"
+        echo "Downloading ${URL}"
+        curl -fsSL "${AUTH[@]}" -o "${WORK}/${ARCHIVE}" "${URL}"
+        if curl -fsSL "${AUTH[@]}" -o "${WORK}/${ARCHIVE}.sha256" "${SUM_URL}"; then
+          ( cd "${WORK}"
+            if command -v sha256sum >/dev/null 2>&1; then sha256sum -c "${ARCHIVE}.sha256"
+            else shasum -a 256 -c "${ARCHIVE}.sha256"; fi )
+        else
+          echo "::warning::checksum file ${SUM_URL} not found — skipping verification"
+        fi
+
+        # --- Extract (bsdtar handles both tar.gz and zip) ---------------------
+        tar -xf "${WORK}/${ARCHIVE}" -C "${WORK}"
+        # wrap_in_directory:true → binary lives at ${WORK}/${BASE}/${BIN}
+        SRC="${WORK}/${BASE}/${BIN}"
+        [ -f "${SRC}" ] || SRC="${WORK}/${BIN}"   # fallback if layout changes
+        if [ ! -f "${SRC}" ]; then
+          echo "::error::binary ${BIN} not found in archive ${ARCHIVE}"; exit 1
+        fi
+
+        DEST="${RUNNER_TEMP}/stellaris-auth-bin"
+        mkdir -p "${DEST}"
+        install -m 0755 "${SRC}" "${DEST}/${BIN}" 2>/dev/null || { cp "${SRC}" "${DEST}/${BIN}"; chmod +x "${DEST}/${BIN}" || true; }
+
+        echo "${DEST}" >> "${GITHUB_PATH}"
+        echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+        echo "bin-path=${DEST}/${BIN}" >> "${GITHUB_OUTPUT}"
+        echo "Installed stellaris-auth ${VERSION} → ${DEST}/${BIN}"
+
+    # -------------------------------------------------------------------------
+    # 2. Run the wrapped tool through stellaris-auth (unless setup-only).
+    # -------------------------------------------------------------------------
+    - id: run
+      if: ${{ inputs.setup-only != 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        BIN_PATH: ${{ steps.install.outputs.bin-path }}
+        TOOL: ${{ inputs.tool }}
+        ARGS: ${{ inputs.args }}
+        FLAGS: ${{ inputs.flags }}
+        VERBOSE: ${{ inputs.verbose }}
+        REGISTRY_HOST: ${{ inputs.registry-host }}
+        TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        if [ -z "${TOOL}" ]; then
+          echo "::error::input 'tool' is required unless setup-only=true (tofu|terraform|terragrunt)"
+          exit 1
+        fi
+
+        VFLAG=""
+        if [ "${VERBOSE}" = "true" ]; then VFLAG="--verbose"; fi
+
+        # Token input → native --registry-host (Priority 1). Preset TF_TOKEN_*/
+        # TOFU_TOKEN_* env vars are read by the binary independently and still
+        # apply. Token is masked and kept out of the echoed command.
+        CRED=()
+        REDACTED=""
+        if [ -n "${TOKEN}" ]; then
+          if [ -z "${REGISTRY_HOST}" ]; then
+            echo "::error::input 'token' requires 'registry-host'"
+            exit 1
+          fi
+          echo "::add-mask::${TOKEN}"
+          CRED=(--registry-host "${REGISTRY_HOST}=${TOKEN}")
+          REDACTED="--registry-host ${REGISTRY_HOST}=***"
+        fi
+
+        # Intentional word-splitting on FLAGS/ARGS — CI args are space-separated.
+        echo "+ stellaris-auth ${VFLAG} ${FLAGS} ${REDACTED} ${TOOL} ${ARGS}"
+        # shellcheck disable=SC2086
+        exec "${BIN_PATH}" ${VFLAG} ${FLAGS} ${CRED[@]+"${CRED[@]}"} "${TOOL}" ${ARGS}

@@ -71,5 +71,5 @@ release:
   disable: true
   github:
     owner: hyvmind-io
-    name: stellaris-auth
+    name: stellaris-auth-golang
   name_template: "v{{.Version}}"

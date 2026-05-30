@@ -143,7 +143,7 @@ User runs: stellaris-auth tofu init
 
 ### Pre-built Binaries (Recommended)
 
-Download from the [Releases](https://github.com/hyvmind-io/stellaris-auth/releases) page.
+Download from the [Releases](https://github.com/hyvmind-io/stellaris-auth-golang/releases) page.
 
 | Platform | Architecture          | Download                                       |
 | -------- | --------------------- | ---------------------------------------------- |
@@ -160,8 +160,8 @@ Every release includes a SHA256 checksums file (`stellaris-auth_<version>_checks
 
 ```bash
 # Download the binary and checksums file
-curl -LO https://github.com/hyvmind-io/stellaris-auth/releases/download/v0.1.0/stellaris-auth_0.1.0_darwin_arm64.tar.gz
-curl -LO https://github.com/hyvmind-io/stellaris-auth/releases/download/v0.1.0/stellaris-auth_0.1.0_checksums.txt
+curl -LO https://github.com/hyvmind-io/stellaris-auth-golang/releases/download/v0.1.0/stellaris-auth_0.1.0_darwin_arm64.tar.gz
+curl -LO https://github.com/hyvmind-io/stellaris-auth-golang/releases/download/v0.1.0/stellaris-auth_0.1.0_checksums.txt
 
 # Verify the checksum
 sha256sum -c stellaris-auth_0.1.0_checksums.txt --ignore-missing
@@ -185,7 +185,7 @@ sudo mv stellaris-auth /usr/local/bin/
 go install github.com/hyvmind-io/stellaris-auth/cmd/stellaris-auth@latest
 
 # Or clone and build
-git clone https://github.com/hyvmind-io/stellaris-auth.git
+git clone https://github.com/hyvmind-io/stellaris-auth-golang.git
 cd stellaris-auth
 make build
 ```
@@ -415,7 +415,28 @@ credentials "models.magnuschat.com" {
 
 ## CI/CD Integration
 
-### GitHub Actions
+### GitHub Actions (recommended: the published action)
+
+This repository **is** a GitHub Action. Reference it by `hyvmind-io/stellaris-auth-golang@<tag>` from any public or private repository. The action installs the binary onto the runner `PATH` and (unless `setup-only`) runs your IaC tool through it.
+
+Credentials can be supplied **two ways, which compose**:
+
+1. **`token` + `registry-host` inputs** (highest priority) — injected as `--registry-host`, masked in logs.
+2. **Preset `TF_TOKEN_*` / `TOFU_TOKEN_*` env vars** — read natively by the binary. The hostname suffix is encoded: dots → `_`, hyphens → `__`. So `registry.example.com` → `TF_TOKEN_registry_example_com`.
+
+Token input (no hostname encoding needed):
+
+```yaml
+      - name: Terragrunt plan (auth-injected)
+        uses: hyvmind-io/stellaris-auth-golang@v1
+        with:
+          tool: terragrunt
+          args: "run --all -- plan"
+          registry-host: registry.example.com
+          token: ${{ secrets.STELLARIS_TOKEN }}
+```
+
+Or via env vars (multiple hosts, or when you already export them):
 
 ```yaml
 name: Terraform Plan
@@ -433,24 +454,68 @@ jobs:
       - name: Install OpenTofu
         uses: opentofu/setup-opentofu@v1
 
+      # One step: install stellaris-auth + run the wrapped command.
+      - name: Terragrunt plan (auth-injected)
+        uses: hyvmind-io/stellaris-auth-golang@v1
+        env:
+          TF_TOKEN_registry_example_com: ${{ secrets.REGISTRY_TOKEN }}
+        with:
+          tool: terragrunt
+          args: "run --all -- plan"
+          working-directory: environments/prod
+          verbose: "true"
+```
+
+**Setup-only mode** — install once, then call `stellaris-auth` yourself across several steps:
+
+```yaml
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    env:
+      TF_TOKEN_registry_example_com: ${{ secrets.REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+
+      - name: Install stellaris-auth
+        uses: hyvmind-io/stellaris-auth-golang@v1
+        with:
+          version: latest      # or a pinned tag e.g. v1.2.3
+          setup-only: "true"
+
+      - run: stellaris-auth tofu init
+      - run: stellaris-auth tofu plan
+```
+
+#### Action inputs
+
+| Input               | Default          | Description                                                                       |
+| ------------------- | ---------------- | --------------------------------------------------------------------------------- |
+| `version`           | `latest`         | Release to install. `latest`, `v1.2.3`, or `1.2.3`.                               |
+| `tool`              | _(empty)_        | `tofu` \| `terraform` \| `terragrunt`. Required unless `setup-only: "true"`.      |
+| `args`              | _(empty)_        | Space-separated args for the tool (e.g. `"run --all -- init"`).                   |
+| `working-directory` | `.`              | Directory the wrapped tool runs in.                                               |
+| `registry-host`     | _(empty)_        | Hostname to authenticate (e.g. `registry.example.com`). Paired with `token`. |
+| `token`             | _(empty)_        | Bearer token for `registry-host`. Masked, never echoed. Requires `registry-host`. |
+| `flags`             | _(empty)_        | Extra stellaris-auth flags before the tool (e.g. `--ca-dir /tmp/ca`). Never put tokens here — use `token`. |
+| `verbose`           | `false`          | Add `--verbose` (debug logs; tokens never logged).                                |
+| `setup-only`        | `false`          | Install onto `PATH` and skip execution.                                           |
+| `github-token`      | `${{ github.token }}` | Token for the Releases API (version lookup + download).                      |
+
+Outputs: `version` (resolved, no leading `v`) and `bin-path` (absolute path to the installed binary).
+
+Runners: Linux/macOS/Windows on amd64/arm64. macOS **arm64 only** (`macos-14`+) — no `darwin/amd64` build is published.
+
+#### Manual install (without the action)
+
+```yaml
       - name: Install stellaris-auth
         run: |
-          curl -LO https://github.com/hyvmind-io/stellaris-auth/releases/latest/download/stellaris-auth_linux_amd64.tar.gz
-          tar xzf stellaris-auth_linux_amd64.tar.gz
-          sudo mv stellaris-auth /usr/local/bin/
-
-      - name: Setup stellaris-auth CA
-        run: stellaris-auth setup
-
-      - name: Terraform Init
-        env:
-          TF_TOKEN_registry_example_com: ${{ secrets.REGISTRY_TOKEN }}
-        run: stellaris-auth tofu init
-
-      - name: Terraform Plan
-        env:
-          TF_TOKEN_registry_example_com: ${{ secrets.REGISTRY_TOKEN }}
-        run: stellaris-auth tofu plan
+          VER=1.2.3
+          curl -fsSLO https://github.com/hyvmind-io/stellaris-auth-golang/releases/download/v${VER}/stellaris-auth-v${VER}-linux-amd64.tar.gz
+          tar xzf stellaris-auth-v${VER}-linux-amd64.tar.gz
+          sudo install -m 0755 stellaris-auth-v${VER}-linux-amd64/stellaris-auth /usr/local/bin/
 ```
 
 ### GitLab CI
@@ -465,10 +530,10 @@ tofu-plan:
   variables:
     TOFU_TOKEN_registry_example_com: ${REGISTRY_TOKEN}
   before_script:
-    - curl -LO https://github.com/hyvmind-io/stellaris-auth/releases/latest/download/stellaris-auth_linux_amd64.tar.gz
-    - tar xzf stellaris-auth_linux_amd64.tar.gz
-    - mv stellaris-auth /usr/local/bin/
-    - stellaris-auth setup
+    - VER=1.2.3
+    - curl -fsSLO https://github.com/hyvmind-io/stellaris-auth-golang/releases/download/v${VER}/stellaris-auth-v${VER}-linux-amd64.tar.gz
+    - tar xzf stellaris-auth-v${VER}-linux-amd64.tar.gz
+    - install -m 0755 stellaris-auth-v${VER}-linux-amd64/stellaris-auth /usr/local/bin/
   script:
     - stellaris-auth tofu init
     - stellaris-auth tofu plan
