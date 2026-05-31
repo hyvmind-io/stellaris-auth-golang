@@ -50,6 +50,9 @@ type Config struct {
 	// target hostname. When nil, a default config with only ServerName set
 	// is used. Useful in tests to set InsecureSkipVerify: true.
 	UpstreamTLSConfig *tls.Config
+
+	// Bypass lists hosts that are always tunneled, even with a credential.
+	Bypass *Bypass
 }
 
 // Server is an HTTP/CONNECT forward proxy that selectively intercepts TLS.
@@ -155,12 +158,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// host is the full "hostname:port" string used for dialling.
 	host := r.Host
 
-	// ── Credential lookup ─────────────────────────────────────────────────────
-	// Try the full host:port first (most specific — matches .tofurc blocks like
-	// `credentials "registry.example.com:3000" { ... }`), then fall back to the
-	// bare hostname (matches blocks without a port). This two-step lookup is
-	// intentional: CredentialStore.Lookup performs exact matching only, so the
-	// port-stripping fallback lives here where we have the full CONNECT context.
+	if s.cfg.Bypass.Match(host) {
+		s.cfg.Logger.Info("[proxy] TUNNEL",
+			slog.String("hostname", hostname),
+			slog.String("host", host),
+			slog.String("action", "passthrough (bypass)"),
+		)
+		s.tunnel.Handle(w, r, host)
+		return
+	}
+
+	// Lookup is exact-match: try host:port (port-scoped .tofurc blocks), then bare hostname.
 	token, found := s.cfg.Credentials.Lookup(host)
 	if !found {
 		token, found = s.cfg.Credentials.Lookup(hostname)

@@ -33,6 +33,12 @@ import (
 // The test CA is returned so callers can build trust pools for clients.
 func newTestProxy(t *testing.T, hosts map[string]string) (*proxy.Server, *ca.CA) {
 	t.Helper()
+	return newTestProxyWithBypass(t, hosts, nil)
+}
+
+// newTestProxyWithBypass is newTestProxy with NO_PROXY-style bypass patterns.
+func newTestProxyWithBypass(t *testing.T, hosts map[string]string, bypass []string) (*proxy.Server, *ca.CA) {
+	t.Helper()
 
 	store := credentials.New()
 	for h, tok := range hosts {
@@ -56,6 +62,7 @@ func newTestProxy(t *testing.T, hosts map[string]string) (*proxy.Server, *ca.CA)
 		IdleTimeout:    10 * time.Second,
 		// Skip upstream cert verification so tests work with httptest servers.
 		UpstreamTLSConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		Bypass:            proxy.NewBypass(bypass),
 	})
 
 	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })

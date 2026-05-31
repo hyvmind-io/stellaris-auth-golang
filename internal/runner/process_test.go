@@ -7,6 +7,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -128,7 +129,7 @@ func TestBuildChildEnv_overrides(t *testing.T) {
 	const proxyAddr = "http://127.0.0.1:8080"
 	const caFile = "/tmp/ca.pem"
 
-	env := buildChildEnv([]string{}, proxyAddr, caFile)
+	env := buildChildEnv([]string{}, proxyAddr, caFile, nil)
 
 	wantPairs := map[string]string{
 		"HTTPS_PROXY":         proxyAddr,
@@ -160,7 +161,7 @@ func TestBuildChildEnv_noduplication(t *testing.T) {
 		"PATH=/usr/bin:/bin",
 	}
 
-	env := buildChildEnv(parent, proxyAddr, caFile)
+	env := buildChildEnv(parent, proxyAddr, caFile, nil)
 
 	// Count occurrences of HTTPS_PROXY entries.
 	count := 0
@@ -190,7 +191,7 @@ func TestBuildChildEnv_inherited(t *testing.T) {
 		"TERM=xterm-256color",
 	}
 
-	env := buildChildEnv(parent, proxyAddr, caFile)
+	env := buildChildEnv(parent, proxyAddr, caFile, nil)
 
 	for _, entry := range parent {
 		if !slices.Contains(env, entry) {
@@ -209,7 +210,7 @@ func TestBuildChildEnv_caseInsensitive(t *testing.T) {
 		"PATH=/usr/bin",
 	}
 
-	env := buildChildEnv(parent, proxyAddr, caFile)
+	env := buildChildEnv(parent, proxyAddr, caFile, nil)
 
 	// The old lowercase entry must be gone.
 	for _, entry := range env {
@@ -223,5 +224,41 @@ func TestBuildChildEnv_caseInsensitive(t *testing.T) {
 	newEntry := "HTTPS_PROXY=" + proxyAddr
 	if !slices.Contains(env, newEntry) {
 		t.Errorf("buildChildEnv() new HTTPS_PROXY value not found; env = %v", env)
+	}
+}
+
+func TestBuildChildEnv_noProxyMerge(t *testing.T) {
+	tests := []struct {
+		name   string
+		parent []string
+		bypass []string
+		want   string
+	}{
+		{"none", nil, nil, ""},
+		{"bypass only", nil, []string{"a.com", ".b.org"}, "a.com,.b.org"},
+		{"upper parent merged", []string{"NO_PROXY=localhost,a.com"}, []string{"A.com", "c.net"}, "localhost,a.com,c.net"},
+		{"lower parent merged", []string{"no_proxy=10.0.0.1"}, []string{"c.net"}, "10.0.0.1,c.net"},
+		{"both parents deduped", []string{"NO_PROXY=x.io", "no_proxy=x.io,y.io"}, nil, "x.io,y.io"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env := buildChildEnv(tc.parent, "http://127.0.0.1:1", "/ca.pem", tc.bypass)
+			var got []string
+			for _, e := range env {
+				if strings.HasPrefix(strings.ToUpper(e), "NO_PROXY=") {
+					got = append(got, e)
+				}
+			}
+			if tc.want == "" {
+				if len(got) != 0 {
+					t.Errorf("NO_PROXY entries = %v; want none", got)
+				}
+				return
+			}
+			want := []string{"NO_PROXY=" + tc.want, "no_proxy=" + tc.want}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("NO_PROXY entries = %v; want %v", got, want)
+			}
+		})
 	}
 }

@@ -44,6 +44,7 @@ var (
 	insecure      bool
 	caDir         string
 	registryHosts []string
+	bypassHosts   []string
 )
 
 // Setup-specific flags.
@@ -119,6 +120,8 @@ func init() {
 		"CA certificate directory (default: ~/.stellaris-auth/ca/)")
 	rootCmd.PersistentFlags().StringArrayVar(&registryHosts, "registry-host", nil,
 		"host=token credential override (repeatable)")
+	rootCmd.PersistentFlags().StringArrayVar(&bypassHosts, "bypass-host", nil,
+		"NO_PROXY-style host pattern never intercepted (repeatable, comma-separated allowed)")
 
 	// Setup-specific flags.
 	setupCmd.Flags().BoolVar(&forceSetup, "force", false,
@@ -188,7 +191,11 @@ func runRootCmd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("ensuring CA: %w", err)
 	}
-	certPath := caManager.CertPath()
+
+	bundle, bypass, err := prepareChildTrust(logger, store, resolvedCADir, caData.CertPEM)
+	if err != nil {
+		return err
+	}
 
 	// Build proxy listen address.
 	listenAddr := fmt.Sprintf("127.0.0.1:%d", port) // port==0 → OS assigns
@@ -211,6 +218,7 @@ func runRootCmd(cmd *cobra.Command, args []string) error {
 		CertCache:         ca.NewCache(),
 		Logger:            logger,
 		UpstreamTLSConfig: upstreamTLSConfig,
+		Bypass:            bypass,
 	})
 
 	// Start proxy in a goroutine; it will block until Shutdown is called.
@@ -234,7 +242,8 @@ func runRootCmd(cmd *cobra.Command, args []string) error {
 		Binary:    args[0],
 		Args:      args[1:],
 		ProxyAddr: proxyAddr,
-		CAFile:    certPath,
+		CAFile:    bundle.Path,
+		NoProxy:   bypass.Patterns(),
 		Logger:    logger,
 	})
 	if err != nil {
@@ -307,6 +316,35 @@ func runSetupCmd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// prepareChildTrust writes the child trust bundle and builds the bypass
+// matcher, logging both and warning on bypassed credentialed hosts.
+func prepareChildTrust(logger *slog.Logger, store *credentials.CredentialStore, dir string, caPEM []byte) (ca.BundleResult, *proxy.Bypass, error) {
+	bundle, err := ca.WriteBundle(dir, caPEM, os.Getenv("SSL_CERT_FILE"))
+	if err != nil {
+		return bundle, nil, fmt.Errorf("building CA bundle: %w", err)
+	}
+	if bundle.Source == ca.BundleSourceNone {
+		logger.Warn("no system root CAs found; child trusts only the stellaris-auth CA",
+			slog.String("bundle", bundle.Path))
+	}
+	logger.Debug("child CA bundle",
+		slog.String("path", bundle.Path),
+		slog.String("source", bundle.Source),
+		slog.String("origin", bundle.Origin),
+		slog.Int("certs", bundle.Certs))
+
+	bypass := proxy.NewBypass(bypassHosts)
+	logger.Debug("bypass hosts", slog.Any("patterns", bypass.Patterns()))
+	for _, h := range store.Hostnames() {
+		if bypass.Match(h) {
+			logger.Warn("bypassed host has a credential; it will not be intercepted and artifact downloads may 401 on strict registries",
+				slog.String("hostname", h))
+		}
+	}
+
+	return bundle, bypass, nil
+}
+
 // resolveEnvVarFlags is the PersistentPreRunE hook that reads STELLARIS_AUTH_*
 // environment variables as fallbacks for flags that were not explicitly set on
 // the command line.
@@ -340,6 +378,13 @@ func resolveEnvVarFlags(cmd *cobra.Command, args []string) error {
 	if !cmd.Flags().Changed("ca-dir") {
 		if envCADir := os.Getenv("STELLARIS_AUTH_CA_DIR"); envCADir != "" {
 			caDir = envCADir
+		}
+	}
+
+	// STELLARIS_AUTH_BYPASS_HOSTS → --bypass-host (comma-separated).
+	if !cmd.Flags().Changed("bypass-host") {
+		if envBypass := os.Getenv("STELLARIS_AUTH_BYPASS_HOSTS"); envBypass != "" {
+			bypassHosts = []string{envBypass}
 		}
 	}
 

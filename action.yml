@@ -43,6 +43,10 @@ inputs:
     description: "Bearer token for `registry-host`. Masked in logs and never echoed. Requires `registry-host`. Optional — preset TF_TOKEN_*/TOFU_TOKEN_* env vars are honoured independently."
     required: false
     default: ""
+  bypass-hosts:
+    description: 'Comma-separated NO_PROXY-style host patterns that are never intercepted, even with a credential (e.g. "r2.example.com,.amazonaws.com"). Passed as STELLARIS_AUTH_BYPASS_HOSTS and merged into the child NO_PROXY/no_proxy.'
+    required: false
+    default: ""
   flags:
     description: 'Extra stellaris-auth flags placed before the tool name (e.g. "--ca-dir /tmp/ca"). --verbose is added automatically when verbose=true. Do NOT put tokens here — they would be echoed; use the `token` input instead.'
     required: false
@@ -179,6 +183,7 @@ runs:
         VERBOSE: ${{ inputs.verbose }}
         REGISTRY_HOST: ${{ inputs.registry-host }}
         TOKEN: ${{ inputs.token }}
+        STELLARIS_AUTH_BYPASS_HOSTS: ${{ inputs.bypass-hosts }}
       run: |
         set -euo pipefail
         if [ -z "${TOOL}" ]; then

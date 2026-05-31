@@ -24,8 +24,11 @@ type Config struct {
 	// ProxyAddr is the HTTP proxy address, e.g., "http://127.0.0.1:8080".
 	ProxyAddr string
 
-	// CAFile is the absolute path to the CA certificate PEM file.
+	// CAFile is the absolute path to the PEM trust bundle given to the child.
 	CAFile string
+
+	// NoProxy holds bypass patterns merged into the child's NO_PROXY/no_proxy.
+	NoProxy []string
 
 	// Logger for structured output.
 	Logger *slog.Logger
@@ -67,7 +70,7 @@ func New(cfg Config) (*Runner, error) {
 func (r *Runner) Start() error {
 	//nolint:gosec // G204: executing the user-specified binary is this tool's entire purpose.
 	r.cmd = exec.Command(r.binPath, r.args...)
-	r.cmd.Env = buildChildEnv(os.Environ(), r.cfg.ProxyAddr, r.cfg.CAFile)
+	r.cmd.Env = buildChildEnv(os.Environ(), r.cfg.ProxyAddr, r.cfg.CAFile, r.cfg.NoProxy)
 	r.cmd.Stdout = os.Stdout
 	r.cmd.Stderr = os.Stderr
 	r.cmd.Stdin = os.Stdin
@@ -139,24 +142,24 @@ func (r *Runner) Run(ctx context.Context) (int, error) {
 
 // buildChildEnv builds the environment slice for the child process. It takes
 // the parent's environment, strips any existing entries for the proxy/CA keys
-// (case-insensitive), then appends the override entries derived from proxyAddr
-// and caFile.
-func buildChildEnv(parentEnv []string, proxyAddr, caFile string) []string {
+// (case-insensitive), then appends the overrides. NO_PROXY and no_proxy are
+// both set to the parent's values merged with noProxy, when non-empty.
+func buildChildEnv(parentEnv []string, proxyAddr, caFile string, noProxy []string) []string {
 	overrideKeys := []string{
 		"HTTPS_PROXY",
 		"HTTP_PROXY",
 		"SSL_CERT_FILE",
 		"NODE_EXTRA_CA_CERTS",
+		"NO_PROXY",
 	}
 
-	// Build a set of uppercase keys to filter.
 	filterSet := make(map[string]struct{}, len(overrideKeys))
 	for _, k := range overrideKeys {
 		filterSet[strings.ToUpper(k)] = struct{}{}
 	}
 
-	// Copy parent env, skipping any keys we are about to override.
-	filtered := make([]string, 0, len(parentEnv)+len(overrideKeys))
+	var parentNoProxy []string
+	filtered := make([]string, 0, len(parentEnv)+len(overrideKeys)+1)
 	for _, entry := range parentEnv {
 		idx := strings.IndexByte(entry, '=')
 		if idx < 0 {
@@ -164,12 +167,14 @@ func buildChildEnv(parentEnv []string, proxyAddr, caFile string) []string {
 			continue
 		}
 		key := strings.ToUpper(entry[:idx])
+		if key == "NO_PROXY" {
+			parentNoProxy = append(parentNoProxy, entry[idx+1:])
+		}
 		if _, skip := filterSet[key]; !skip {
 			filtered = append(filtered, entry)
 		}
 	}
 
-	// Append the override entries.
 	filtered = append(filtered,
 		"HTTPS_PROXY="+proxyAddr,
 		"HTTP_PROXY="+proxyAddr,
@@ -177,5 +182,31 @@ func buildChildEnv(parentEnv []string, proxyAddr, caFile string) []string {
 		"NODE_EXTRA_CA_CERTS="+caFile,
 	)
 
+	if merged := mergeNoProxy(append(parentNoProxy, noProxy...)); merged != "" {
+		filtered = append(filtered, "NO_PROXY="+merged, "no_proxy="+merged)
+	}
+
 	return filtered
+}
+
+// mergeNoProxy joins comma-separated lists, trimming and dropping empty or
+// case-insensitive duplicate entries while keeping first-seen order.
+func mergeNoProxy(lists []string) string {
+	var out []string
+	seen := make(map[string]struct{})
+	for _, l := range lists {
+		for _, p := range strings.Split(l, ",") {
+			p = strings.TrimSpace(p)
+			k := strings.ToLower(p)
+			if p == "" {
+				continue
+			}
+			if _, dup := seen[k]; dup {
+				continue
+			}
+			seen[k] = struct{}{}
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, ",")
 }

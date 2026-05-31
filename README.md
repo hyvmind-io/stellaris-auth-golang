@@ -65,7 +65,7 @@ The communication between these two subsystems is a **plain `string` URL** — t
 2. **Starts a local MITM proxy** bound to `127.0.0.1` (loopback only, no network exposure).
 3. **For CONNECT requests to hosts with credentials**: performs TLS MITM — terminates the client's TLS connection (presenting a leaf certificate signed by a local CA), reads the HTTP request, injects `Authorization: Bearer <token>`, and forwards to the upstream server over a fresh TLS connection.
 4. **For all other HTTPS traffic**: standard CONNECT tunneling — raw TCP pipe, no inspection, no modification.
-5. **Launches `tofu` or `terraform`** as a child process with `HTTPS_PROXY` and `SSL_CERT_FILE` automatically configured to route traffic through the proxy and trust the local CA.
+5. **Launches `tofu` or `terraform`** as a child process with `HTTPS_PROXY` and `SSL_CERT_FILE` automatically configured to route traffic through the proxy and trust a bundle of the local CA plus the roots the child would otherwise trust (parent `SSL_CERT_FILE`, else system roots).
 6. **Exits with the child's exit code** — fully transparent to CI/CD pipelines and scripts.
 
 ### Architecture
@@ -117,7 +117,7 @@ User runs: stellaris-auth tofu init
   ├─ 4. Start MITM proxy on 127.0.0.1:<random-port>
   ├─ 5. Fork child process: tofu init
   │     Environment: HTTPS_PROXY=http://127.0.0.1:<port>
-  │                  SSL_CERT_FILE=~/.stellaris-auth/ca/stellaris-auth-ca.crt
+  │                  SSL_CERT_FILE=~/.stellaris-auth/ca/stellaris-auth-bundle.pem
   │
   │  6. tofu makes requests through proxy:
   │  ├─ CONNECT registry.example.com:443
@@ -334,6 +334,7 @@ stellaris-auth version
 | `--verbose`       | `-v`  | `false`                 | Debug logging (logs intercepted hosts, never token values) |
 | `--ca-dir`        |       | `~/.stellaris-auth/ca/` | Directory containing CA certificate and key                |
 | `--registry-host` |       |                         | Manual `host=token` override (repeatable)                  |
+| `--bypass-host`   |       |                         | `NO_PROXY`-style host pattern never intercepted (repeatable, comma-separated allowed) |
 
 **Setup-specific flags:**
 
@@ -350,6 +351,7 @@ stellaris-auth reads the following environment variables as fallbacks for CLI fl
 | `STELLARIS_AUTH_PORT`    | `--port`        | Proxy listen port          |
 | `STELLARIS_AUTH_CA_DIR`  | `--ca-dir`      | CA certificate directory   |
 | `STELLARIS_AUTH_VERBOSE` | `--verbose`     | Debug mode (`1` or `true`) |
+| `STELLARIS_AUTH_BYPASS_HOSTS` | `--bypass-host` | Comma-separated bypass patterns |
 
 ### Injected Environment (set on the child process)
 
@@ -359,8 +361,15 @@ These environment variables are automatically set on the child `tofu`/`terraform
 | --------------------- | -------------------------------- | ------------------------------------------------ |
 | `HTTPS_PROXY`         | `http://127.0.0.1:<port>`        | Route all HTTPS traffic through the proxy        |
 | `HTTP_PROXY`          | `http://127.0.0.1:<port>`        | Route HTTP traffic through the proxy             |
-| `SSL_CERT_FILE`       | `<ca-dir>/stellaris-auth-ca.crt` | Trust the MITM CA certificate                    |
-| `NODE_EXTRA_CA_CERTS` | `<ca-dir>/stellaris-auth-ca.crt` | Node.js CA trust (for tooling that uses Node.js) |
+| `SSL_CERT_FILE`       | `<ca-dir>/stellaris-auth-bundle.pem` | Trust the MITM CA plus parent `SSL_CERT_FILE` or system roots |
+| `NODE_EXTRA_CA_CERTS` | `<ca-dir>/stellaris-auth-bundle.pem` | Node.js CA trust (for tooling that uses Node.js) |
+| `NO_PROXY`, `no_proxy` | parent value + bypass patterns | Only set when non-empty                          |
+
+### Host Bypass
+
+`--bypass-host` / `STELLARIS_AUTH_BYPASS_HOSTS` take `NO_PROXY` patterns: `host` (exact), `.example.com` (subdomains only), `host:port` (that port only), `*` (all). Bypassed hosts are always tunneled, never intercepted, even when a credential exists (a warning is logged in that case, since strict registries may then return `401` on artifact downloads). Patterns are also merged into the child's `NO_PROXY`/`no_proxy`, so tools honouring it skip the proxy entirely.
+
+The trust bundle (`stellaris-auth-bundle.pem`, mode `0644`) is rebuilt on every run and contains certificates only. If the parent sets `SSL_CERT_FILE` it must be readable, otherwise startup fails.
 
 ---
 
@@ -594,7 +603,11 @@ stellaris-auth/
 │       └── process_test.go       # Unit tests for process management
 ├── .github/
 │   └── workflows/
-│       └── ci.yml                # CI pipeline (test matrix, lint, release)
+│       ├── pipeline.yml          # lint/test → gated builds → smoke → release
+│       └── major-tag.yml         # Moves the floating vMAJOR tag on release
+├── scripts/
+│   ├── release-build.sh          # GoReleaser build+archive per target group
+│   └── release-verify.sh         # Release gate: all archives + checksums present
 ├── .goreleaser.yml               # Cross-platform binary build configuration
 ├── go.mod
 ├── go.sum
@@ -679,6 +692,18 @@ Test the GoReleaser configuration locally (no Git tag required):
 ```bash
 make snapshot
 ```
+
+### Release Pipeline
+
+`.github/workflows/pipeline.yml` runs on every push and PR to `master`:
+
+1. **lint** and **test** (Linux only; darwin/windows code is checked with `GOOS` cross-`go vet`) run in parallel with **version**, which asks `semantic-release --dry-run` for the next version so binaries are stamped before they are built.
+2. **build-linux** cross-compiles and archives linux/amd64+arm64 (`scripts/release-build.sh <version> linux`) and smoke-runs the amd64 binary. If it fails, nothing else is built.
+3. **build-others** builds darwin/arm64 and windows/amd64+arm64 on the same Linux runner type.
+4. **smoke-darwin** / **smoke-windows** download those exact archives and run them on macOS/Windows; no compilation happens there.
+5. **release** (master only, when a releasable Conventional Commit exists) downloads every archive and runs semantic-release. Its `prepareCmd`, `scripts/release-verify.sh`, aborts before tagging unless all 5 archives + checksums exist for that version; `@semantic-release/github` then creates the Release as a draft, uploads all assets, and publishes it. `major-tag.yml` moves `v1` to the new tag.
+
+Each binary is compiled exactly once; the smoke jobs and the release reuse the uploaded artifacts.
 
 ### All Make Targets
 
