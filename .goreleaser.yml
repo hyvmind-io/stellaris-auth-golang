@@ -9,20 +9,32 @@ before:
     - go generate ./...
 
 builds:
-  - id: stellaris-auth
+  # Two build ids so CI can build Linux first and the rest only if it passes.
+  # RELEASE_TARGETS (linux | others | all) selects which run; see
+  # scripts/release-build.sh. Target matrix: macOS arm64, Windows amd64+arm64,
+  # Linux amd64+arm64. macOS amd64 is intentionally excluded.
+  - id: linux
+    skip: '{{ eq (index .Env "RELEASE_TARGETS") "others" }}'
     main: ./cmd/stellaris-auth
     binary: stellaris-auth
     env:
       - CGO_ENABLED=0
-    goos:
-      - darwin
-      - linux
-      - windows
-    goarch:
-      - amd64
-      - arm64
-    # Target matrix: macOS arm64, Windows amd64+arm64, Linux amd64+arm64.
-    # macOS amd64 is intentionally excluded.
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+    flags:
+      - -trimpath
+
+  - id: others
+    skip: '{{ eq (index .Env "RELEASE_TARGETS") "linux" }}'
+    main: ./cmd/stellaris-auth
+    binary: stellaris-auth
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, windows]
+    goarch: [amd64, arm64]
     ignore:
       - goos: darwin
         goarch: amd64

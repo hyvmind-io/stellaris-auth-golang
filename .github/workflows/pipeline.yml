@@ -1,0 +1,252 @@
+# lint/test → build-linux → build-others → smoke (darwin, windows) → release.
+# Artifacts are built once and reused; see README "Release Pipeline".
+name: Pipeline
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GO_VERSION: "1.26"
+  SEMREL_PACKAGES: >-
+    semantic-release @semantic-release/commit-analyzer
+    @semantic-release/release-notes-generator @semantic-release/changelog
+    @semantic-release/git @semantic-release/exec @semantic-release/github
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      # Built from source: prebuilt releases reject a newer go.mod directive.
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+      - name: Run golangci-lint
+        run: golangci-lint run --timeout=5m
+
+  test:
+    name: Test (linux) + cross-vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - run: go mod verify
+      - name: go vet (linux, darwin, windows)
+        run: |
+          go vet ./...
+          GOOS=darwin GOARCH=arm64 go vet ./...
+          GOOS=windows GOARCH=amd64 go vet ./...
+      - name: Run tests
+        run: go test -race -count=1 -timeout 120s ./...
+
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      release: ${{ steps.resolve.outputs.release }}
+    steps:
+      - name: Generate GitHub App token
+        if: github.event_name != 'pull_request'
+        uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ vars.VERSION_BUMPER_CLIENT_ID }}
+          private-key: ${{ secrets.VERSION_BUMPER_SECRET }}
+      - uses: actions/checkout@v6
+        if: github.event_name != 'pull_request'
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - uses: actions/setup-node@v6
+        if: github.event_name != 'pull_request'
+        with:
+          node-version: 22
+      - name: Install semantic-release
+        if: github.event_name != 'pull_request'
+        run: npm install --no-save $SEMREL_PACKAGES
+      - name: Resolve next version
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          next=""
+          if [ "$EVENT" != "pull_request" ]; then
+            out="$(./node_modules/.bin/semantic-release --dry-run 2>&1)"
+            echo "$out"
+            next="$(grep -oP 'The next release version is \K[0-9]+\.[0-9]+\.[0-9]+[^ ]*' <<<"$out" | head -1 || true)"
+          fi
+          if [ -n "$next" ]; then
+            echo "version=$next" >> "$GITHUB_OUTPUT"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "Release v$next" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "version=0.0.0-dev.${SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "No release; build-only (0.0.0-dev.${SHA::7})" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  build-linux:
+    name: Build linux
+    needs: [lint, test, version]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          install-only: true
+      - name: Build + archive (linux/amd64, linux/arm64)
+        run: scripts/release-build.sh "${{ needs.version.outputs.version }}" linux
+      - name: Smoke test linux/amd64 artifact
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          s="$(mktemp -d)"
+          tar xzf "dist/stellaris-auth-v${VERSION}-linux-amd64.tar.gz" -C "$s"
+          bin="$s/stellaris-auth-v${VERSION}-linux-amd64/stellaris-auth"
+          "$bin" version | grep -F "$VERSION"
+          "$bin" --ca-dir "$s/ca" --registry-host smoke.invalid=x \
+            sh -c 'curl -fsS --cacert "$SSL_CERT_FILE" -o /dev/null https://api.github.com'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  build-others:
+    name: Build darwin + windows
+    needs: [build-linux, version]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          install-only: true
+      - name: Build + archive (darwin/arm64, windows/amd64, windows/arm64)
+        run: scripts/release-build.sh "${{ needs.version.outputs.version }}" others
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-others
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  smoke-darwin:
+    name: Smoke darwin/arm64 artifact
+    needs: [build-others, version]
+    runs-on: macos-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-others
+          path: dist
+      - name: Run artifact
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          s="$(mktemp -d)"
+          tar xzf "dist/stellaris-auth-v${VERSION}-darwin-arm64.tar.gz" -C "$s"
+          bin="$s/stellaris-auth-v${VERSION}-darwin-arm64/stellaris-auth"
+          "$bin" version | grep -F "$VERSION"
+          "$bin" --ca-dir "$s/ca" --registry-host smoke.invalid=x \
+            sh -c 'curl -fsS --cacert "$SSL_CERT_FILE" -o /dev/null https://api.github.com'
+
+  smoke-windows:
+    name: Smoke windows/amd64 artifact
+    needs: [build-others, version]
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-others
+          path: dist
+      - name: Run artifact
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $s = Join-Path $env:RUNNER_TEMP 'smoke'
+          Expand-Archive "dist/stellaris-auth-v$env:VERSION-windows-amd64.zip" -DestinationPath $s
+          $bin = Join-Path $s "stellaris-auth-v$env:VERSION-windows-amd64/stellaris-auth.exe"
+          $v = & $bin version
+          if ($v -notmatch [regex]::Escape($env:VERSION)) { throw "version mismatch: $v" }
+          & $bin --ca-dir (Join-Path $s 'ca') --registry-host smoke.invalid=x cmd /c exit 0
+          if ($LASTEXITCODE -ne 0) { throw "wrapped child failed: $LASTEXITCODE" }
+
+  release:
+    name: semantic-release
+    needs: [version, build-linux, build-others, smoke-darwin, smoke-windows]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Generate GitHub App token
+        uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ vars.VERSION_BUMPER_CLIENT_ID }}
+          private-key: ${{ secrets.VERSION_BUMPER_SECRET }}
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm install --no-save $SEMREL_PACKAGES
+      - name: Run semantic-release
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: ./node_modules/.bin/semantic-release
