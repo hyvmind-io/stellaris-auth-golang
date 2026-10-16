@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/hyvmind-io/stellaris-auth-golang/compare/v1.0.1...v1.1.0) (2026-10-16)
+
+
+### Features
+
+* add host bypass list and merged CA trust bundle for the child ([5cba017](https://github.com/hyvmind-io/stellaris-auth-golang/commit/5cba01733a4dd812c16d0e2cbb498e7efac9f103))
+
 ## [1.0.1](https://github.com/hyvmind-io/stellaris-auth-golang/compare/v1.0.0...v1.0.1) (2026-05-30)
 
 
